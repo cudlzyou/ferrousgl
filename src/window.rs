@@ -1,992 +1,328 @@
-extern crate gl;
-extern crate glam;
-extern crate glfw;
+use glutin::prelude::*;
+use glutin::surface::{GlSurface, Surface, WindowSurface};
+use glutin::{
+    config::ConfigTemplateBuilder,
+    context::{ContextApi, ContextAttributesBuilder, NotCurrentContext, Robustness, Version},
+    display::GetGlDisplay,
+};
+use glutin_winit::{DisplayBuilder, GlWindow};
+use raw_window_handle::HasWindowHandle;
+use std::{ffi::CString, num::NonZeroU32, rc::Rc, cell::RefCell};
+use winit::{
+    application::ApplicationHandler,
+    dpi::LogicalSize,
+    event::WindowEvent,
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    window::{Fullscreen, Window as WinitWindow, WindowAttributes},
+};
 
-use std::collections::HashSet;
-use std::ptr;
-
-use glam::{bool, Vec4};
-use glfw::{fail_on_errors, Context, Key, WindowEvent};
-use std::time::{Duration, Instant};
-
-use crate::{Mesh, Texture};
-
-/// A struct to manage an OpenGL context, window, rendering and input!
-pub struct GlWindow {
-    glfw: glfw::Glfw,
-    window: glfw::PWindow,
-    events: glfw::GlfwReceiver<(f64, WindowEvent)>,
-    target_frame_time: Duration,
-    last_frame_time: Instant,
-    rendering_type: RenderingType,
-    mouse_wheel_delta: (f64, f64),
-    last_mouse_position: (f64, f64),
-    typed_keys: HashSet<char>,
-    pressed_keys: HashSet<WindowKey>,
-    previous_pressed_keys: HashSet<WindowKey>,
-    fb_texture: Texture,       // Persistent framebuffer texture
-    depth_texture: Texture,    // Persistent depth texture
-}
-
-impl GlWindow {
-    /// Creates a new OpenGL window with the specified width, height, and title.
-    pub fn new(config: WindowConfig) -> Self {
-        let mut glfw = glfw::init(fail_on_errors!()).unwrap();
-
-        glfw.window_hint(glfw::WindowHint::ContextVersion(3, 3));
-        glfw.window_hint(glfw::WindowHint::OpenGlProfile(glfw::OpenGlProfileHint::Core));   
-        glfw.window_hint(glfw::WindowHint::TransparentFramebuffer(config.transparent_framebuffer));
-        glfw.window_hint(glfw::WindowHint::Decorated(config.decorated));
-        glfw.window_hint(glfw::WindowHint::Resizable(config.resizeable));
-        glfw.window_hint(glfw::WindowHint::DoubleBuffer(true));
-        glfw.window_hint(glfw::WindowHint::Samples(Some(config.anti_aliasing)));
-
-        let (mut window, events) = glfw
-            .create_window(
-                config.width,
-                config.height,
-                &config.title,
-                glfw::WindowMode::Windowed,
-            )
-            .expect("[FerrousGl Error] Failed to create GLFW window.");
-
-        window.make_current();
-        window.set_framebuffer_size_polling(true);
-        window.set_key_polling(true);
-        window.set_char_polling(true);
-        window.set_scroll_polling(true);
-        window.glfw.set_swap_interval(glfw::SwapInterval::None);
-
-        gl::load_with(|symbol| window.get_proc_address(symbol) as *const _);
-
-        unsafe {
-            gl::Enable(gl::DEPTH_TEST);
-            gl::Enable(gl::MULTISAMPLE);
-            gl::Viewport(0, 0, config.width as i32, config.height as i32);
-        }
-
-        let actual_samples = unsafe {
-            let mut samples = 0;
-            gl::GetIntegerv(gl::SAMPLES, &mut samples);
-            samples
-        };
-
-        if actual_samples == 0 {
-            println!("[FerrousGl Error] MSAA Configuration has failed. This is likely a problem with your nvidia driver.\nYou can change the problematic setting by going into NVIDIA Control Panel > Manage 3D Settings and clicking restore.");
-        }
-
-        let fb_texture = Texture::new_empty(config.width, config.height)
-            .expect("Failed to create framebuffer texture");
-        let depth_texture = Texture::new_empty(config.width, config.height)
-            .expect("Failed to create depth texture");
-
-        // Configure depth texture format
-        // In the new() function, modify depth texture creation:
-        unsafe {
-            gl::BindTexture(gl::TEXTURE_2D, depth_texture.id);
-            gl::TexImage2D(
-                gl::TEXTURE_2D,
-                0,
-                gl::DEPTH_COMPONENT32F as i32,  // Use 32-bit float format
-                config.width as i32,
-                config.height as i32,
-                0,
-                gl::DEPTH_COMPONENT,
-                gl::FLOAT,
-                ptr::null(),
-            );
-            // Set texture parameters
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-        }
-
-        GlWindow {
-            glfw,
-            window,
-            events,
-            target_frame_time: Duration::from_secs_f64(1.0 / config.target_framerate as f64),
-            last_frame_time: Instant::now(),
-            rendering_type: RenderingType::Fill,
-            mouse_wheel_delta: (0.0, 0.0),
-            last_mouse_position: (0.0, 0.0),
-            typed_keys: HashSet::new(),
-            pressed_keys: HashSet::new(),
-            previous_pressed_keys: HashSet::new(),
-            fb_texture,
-            depth_texture,
-        }
-    }
-
-    pub unsafe fn get_opengl_ver(&self) -> String {
-        std::ffi::CStr::from_ptr(gl::GetString(gl::VERSION) as *const i8)
-            .to_string_lossy()
-            .into_owned()
-    }
-    
-    pub unsafe fn get_glsl_ver(&self) -> String {
-        std::ffi::CStr::from_ptr(gl::GetString(gl::SHADING_LANGUAGE_VERSION) as *const i8)
-            .to_string_lossy()
-            .into_owned()
-    }
-    
-    pub unsafe fn get_vendor(&self) -> String {
-        std::ffi::CStr::from_ptr(gl::GetString(gl::VENDOR) as *const i8)
-            .to_string_lossy()
-            .into_owned()
-    }
-    
-    pub unsafe fn get_renderer(&self) -> String {
-        std::ffi::CStr::from_ptr(gl::GetString(gl::RENDERER) as *const i8)
-            .to_string_lossy()
-            .into_owned()
-    }
-    
-    /// Returns if the window received a close signal. This allows for "Do you really want to exit?" dialogues for example, or shutting down logic.
-    pub fn should_window_close(&self) -> bool {
-        self.window.should_close()
-    }
-
-    /// Set the windows size.
-    pub fn set_window_size(&mut self, width: u32, height: u32) {
-        self.window.set_size(width as i32, height as i32);
-    }
-
-    /// Set the windows position.
-    pub fn set_window_position(&mut self, x: u32, y: u32) {
-        self.window.set_pos(x as i32, y as i32);
-    }
-
-    /// Set the windows title.
-    pub fn set_window_title(&mut self, new_title: &str) {
-        self.window.set_title(new_title);
-    }
-
-    /// Set the target framerate.
-    pub fn set_target_fps(&mut self, new_target_fps: u32) {
-        self.target_frame_time = Duration::from_secs_f64(1.0 / new_target_fps as f64);
-    }
-
-    /// Set the preferred Rendering Type such as Lines, Points or (the default) Triangles.
-    pub fn set_rendering_type(&mut self, rendering_type: RenderingType) {
-        self.rendering_type = rendering_type;
-    }
-
-    /// Set the preferred Depth Type.
-    pub fn set_depth_testing(&self, depth_func: DepthType) {
-        unsafe {
-            match depth_func.into() {
-                Some(gl_func) => {
-                    gl::Enable(gl::DEPTH_TEST);
-                    gl::DepthFunc(gl_func);
-                }
-                None => {
-                    gl::Disable(gl::DEPTH_TEST);
-                }
-            }
-        }
-    }
-
-    /// Set the preferred Blending Mode.
-    pub fn set_blend_mode(&self, blend_mode: BlendMode) {
-        unsafe {
-            match blend_mode {
-                BlendMode::None => {
-                    gl::Disable(gl::BLEND);
-                }
-                BlendMode::Alpha => {
-                    gl::Enable(gl::BLEND);
-                    gl::BlendFunc(gl::SRC_ALPHA, gl::ONE_MINUS_SRC_ALPHA);
-                }
-                BlendMode::Additive => {
-                    gl::Enable(gl::BLEND);
-                    gl::BlendFunc(gl::SRC_ALPHA, gl::ONE);
-                }
-                BlendMode::Multiplicative => {
-                    gl::Enable(gl::BLEND);
-                    gl::BlendFunc(gl::DST_COLOR, gl::ZERO);
-                }
-                BlendMode::Custom {
-                    src_rgb,
-                    dst_rgb,
-                    src_alpha,
-                    dst_alpha,
-                } => {
-                    gl::Enable(gl::BLEND);
-                    gl::BlendFuncSeparate(
-                        src_rgb.into(),
-                        dst_rgb.into(),
-                        src_alpha.into(),
-                        dst_alpha.into(),
-                    );
-                }
-            }
-        }
-    }
-
-    /// Updates the framebuffer and depth texture. You probably want to do this after rendering anything. 
-    /// Clearing the depth buffer or color buffer will not clear these textures.
-    pub fn update_framebuffer_textures(&mut self) {
-        let (width, height) = self.get_window_size();
-        
-        unsafe {
-            // Update color texture
-            gl::BindTexture(gl::TEXTURE_2D, self.fb_texture.id);
-            gl::CopyTexImage2D(
-                gl::TEXTURE_2D, 0, gl::RGBA,
-                0, 0, width, height, 0
-            );
-            
-            // Update depth texture
-            gl::BindTexture(gl::TEXTURE_2D, self.depth_texture.id);
-            gl::CopyTexImage2D(
-                gl::TEXTURE_2D, 0, gl::DEPTH_COMPONENT,
-                0, 0, width, height, 0
-            );
-            
-            gl::BindTexture(gl::TEXTURE_2D, 0);
-        }
-    }
-
-    /// Returns the framebuffer texture.
-    pub fn get_framebuffer_texture(&self) -> &Texture {
-        &self.fb_texture
-    }
-
-    /// Returns the depth texture.
-    pub fn get_depth_texture(&self) -> &Texture {
-        &self.depth_texture
-    }
-
-    /// Get the current clipboard string.
-    pub fn get_clipboard(&mut self) -> Option<String> {
-        self.window.get_clipboard_string()
-    }
-
-    /// Set a new clipboard string.
-    pub fn set_clipboard(&mut self, new_data: &str) {
-        self.window.set_clipboard_string(new_data);
-    }
-
-    /// Returns the windows size.
-    pub fn get_window_size(&self) -> (i32, i32) {
-        self.window.get_size()
-    }
-
-    /// Returns the windows position.
-    pub fn get_window_position(&self) -> (i32, i32) {
-        self.window.get_pos()
-    }
-
-    /// Set the mouse position.
-    pub fn set_mouse_position(&mut self, x: f64, y: f64) {
-        self.window.set_cursor_pos(x, y);
-    }
-
-    /// Returns the mouse position.
-    pub fn get_mouse_position(&self) -> (f64, f64) {
-        self.window.get_cursor_pos()
-    }
-
-    /// Returns the mouse position delta (x, y).
-    pub fn get_mouse_delta(&self) -> (f64, f64) {
-        let (current_x, current_y) = self.get_mouse_position();
-        let (last_x, last_y) = self.last_mouse_position;
-        (current_x - last_x, current_y - last_y)
-    }
-
-    /// Returns the mouse wheel delta (x, y).
-    pub fn get_mouse_wheel_delta(&self) -> (f64, f64) {
-        self.mouse_wheel_delta
-    }
-
-    /// Clears mouse wheel delta for the next frame.
-    fn reset_mouse_wheel_delta(&mut self) {
-        self.mouse_wheel_delta = (0.0, 0.0);
-    }
-
-    /// Checks if a specific mouse button is pressed.
-    pub fn is_mouse_button_pressed(&self, button: glfw::MouseButton) -> bool {
-        self.window.get_mouse_button(button) == glfw::Action::Press
-    }
-
-    /// Checks if a specific key is pressed.
-    pub fn is_key_pressed(&self, key: WindowKey) -> bool {
-        self.pressed_keys.contains(&key) && !self.previous_pressed_keys.contains(&key)
-    }
-
-    /// Checks if a specific key is released.
-    pub fn is_key_released(&self, key: WindowKey) -> bool {
-        self.window.get_key(key.into()) == glfw::Action::Release
-    }
-
-    /// Checks if a specific key is held.
-    pub fn is_key_held(&self, key: WindowKey) -> bool {
-        self.window.get_key(key.into()) == glfw::Action::Press
-    }
-
-    /// Checks if a specific character key is being typed.
-    pub fn is_key_typed(&self, key: char) -> bool {
-        self.typed_keys.contains(&key)
-    }
-
-    /// Returns all keys that are currently being typed.
-    pub fn get_typed_keys(&self) -> Vec<char> {
-        self.typed_keys.iter().cloned().collect()
-    }
-
-    /// Returns the current frame time as microseconds. The frametime will not be impacted by the target framerate.
-    pub fn get_frame_time(&self) -> f32 {
-        self.last_frame_time.elapsed().as_secs_f32() * 1000.0  // returns milliseconds
-    }
-
-    /// Clears typed keys for the next frame.
-    fn clear_typed_keys(&mut self) {
-        self.typed_keys.clear();
-    }
-
-    /// Updates the state of pressed keys.
-    fn update_pressed_keys(&mut self) {
-        self.previous_pressed_keys = self.pressed_keys.clone();
-        self.pressed_keys.clear();
-    }
-
-    /// Makes this window's OpenGL context current on the calling thread.
-    /// All subsequent OpenGL calls will operate on this context.
-    pub fn make_current(&mut self) {
-        self.window.make_current();
-        gl::load_with(|symbol| self.window.get_proc_address(symbol) as *const _);
-    }
-
-    /// Returns if the window is currently hovered.
-    pub fn is_hovered(&self) -> bool {
-        self.window.is_hovered()
-    }
-
-    /// Returns if the window is currently focused.
-    pub fn is_focused(&self) -> bool {
-        self.window.is_focused()
-    }
-
-    /// Returns if the window is currently visible.
-    pub fn is_visible(&self) -> bool {
-        self.window.is_visible()
-    }
-
-    /// Sets the window to be always on top of other windows.
-    pub fn set_floating(&mut self, floating: bool) {
-        self.window.set_floating(floating);
-    }
-
-    /// Polls events (user input, system events) and swaps buffers.
-    pub fn update(&mut self) {
-        let frame_start = Instant::now();
-        
-        self.clear_typed_keys();
-        self.reset_mouse_wheel_delta();
-        self.update_pressed_keys();
-        self.last_mouse_position = self.get_mouse_position();
-
-        self.glfw.poll_events();
-        for (_, event) in glfw::flush_messages(&self.events) {
-            match event {
-                WindowEvent::Key(key, _, action, _) => {
-                    if action == glfw::Action::Press {
-                        self.pressed_keys.insert(key.into());
-                    }
-                    if key == Key::Escape && action == glfw::Action::Press {
-                        self.window.set_should_close(true);
-                    }
-                }
-                WindowEvent::FramebufferSize(width, height) => {
-                    self.update_viewport(width, height);
-                }
-                WindowEvent::Scroll(xoffset, yoffset) => {
-                    self.mouse_wheel_delta = (xoffset, yoffset);
-                }
-                WindowEvent::Char(codepoint) => {
-                    self.typed_keys.insert(codepoint);
-                }
-                _ => {}
-            }
-        }
-        self.window.swap_buffers();
-
-        // Calculate frame time and sleep if needed (precise)
-        let frame_time = frame_start.elapsed();
-        if frame_time < self.target_frame_time {
-            let sleep_time = self.target_frame_time - frame_time;
-            // Sleep for the whole milliseconds part
-            if sleep_time > Duration::from_micros(500) {
-                std::thread::sleep(sleep_time - Duration::from_micros(500));
-            }
-            // Busy-wait for the rest
-            while frame_start.elapsed() < self.target_frame_time {
-                std::hint::spin_loop();
-            }
-        }
-
-        // Update last_frame_time for get_frame_time()
-        self.last_frame_time = frame_start;
-    }
-
-    /// Updates the OpenGL viewport to match a new window size. This function typically only needs to be used after a
-    /// render texture (or offscreen texture) that has a different size than the window is unbound.
-    pub fn update_viewport(&self, width: i32, height: i32) {
-        unsafe {
-            gl::Viewport(0, 0, width, height);
-        }
-    }
-
-    /// Clears the current bound color buffer with the specified color.
-    pub fn clear_color(&self, color: Vec4) {
-        unsafe {
-            gl::ClearColor(color.x, color.y, color.z, color.w);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
-        }
-    }
-
-    /// Clears the current bound depth buffer.
-    pub fn clear_depth(&self) {
-        unsafe {
-            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
-        }
-    }
-
-    /// Renders a mesh using the provided shader and vertex data onto the current bound framebuffer.
-    pub fn render_mesh(&self, mesh: &Mesh) {
-        unsafe {
-            match self.rendering_type {
-                RenderingType::Points => {
-                    gl::PolygonMode(gl::FRONT_AND_BACK, gl::POINTS);
-                },
-                RenderingType::Lines => {
-                    gl::PolygonMode(gl::FRONT_AND_BACK, gl::LINE);
-                },
-                RenderingType::Fill => {
-                    gl::PolygonMode(gl::FRONT_AND_BACK, gl::FILL);
-                },
-            }
-
-            mesh.bind();
-
-            gl::DrawElements(
-                gl::TRIANGLES,
-                mesh.indices_length as i32,
-                gl::UNSIGNED_INT,
-                ptr::null(),
-            );
-
-            mesh.unbind();
-        }
-    }
-}
-
-/// Struct to more easily allow setting window features.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Window configuration options
 pub struct WindowConfig {
-    pub width: u32,
-    pub height: u32,
+    pub size: (u32, u32),
     pub title: String,
+    pub fullscreen: bool,
     pub decorated: bool,
-    pub resizeable: bool,
-    pub target_framerate: u32,
-    pub transparent_framebuffer: bool,
-    pub anti_aliasing: u32,
+    pub translucent: bool,
+    pub hide_cursor: bool,
+    pub vsync: bool,
+    pub framerate: Option<u32>,
 }
 
 impl Default for WindowConfig {
     fn default() -> Self {
         Self {
-            width: 800,
-            height: 600,
-            title: String::from("FerrousGL Application"),
+            size: (800, 600),
+            title: "FerrousGL Window".to_string(),
+            fullscreen: false,
             decorated: true,
-            resizeable: true,
-            target_framerate: 60,
-            transparent_framebuffer: false,
-            anti_aliasing: 4,
+            translucent: false,
+            hide_cursor: false,
+            vsync: false,
+            framerate: None,
         }
     }
 }
 
-/// Enum representing different blending modes for transparency and compositing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlendMode {
-    None,
-    Alpha,
-    Additive,
-    Multiplicative,
-    Custom {
-        src_rgb: BlendFactor,
-        dst_rgb: BlendFactor,
-        src_alpha: BlendFactor,
-        dst_alpha: BlendFactor,
-    },
+/// Graphics (OpenGL) configuration options
+pub struct GlConfig {
+    pub version_major: u8,
+    pub version_minor: u8,
+    pub robustness: Robustness,
 }
 
-/// Enum representing OpenGL blend factors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BlendFactor {
-    Zero,
-    One,
-    SrcColor,
-    OneMinusSrcColor,
-    DstColor,
-    OneMinusDstColor,
-    SrcAlpha,
-    OneMinusSrcAlpha,
-    DstAlpha,
-    OneMinusDstAlpha,
-    ConstantColor,
-    OneMinusConstantColor,
-    ConstantAlpha,
-    OneMinusConstantAlpha,
-    SrcAlphaSaturate,
-}
-
-impl From<BlendFactor> for gl::types::GLenum {
-    fn from(factor: BlendFactor) -> Self {
-        match factor {
-            BlendFactor::Zero => gl::ZERO,
-            BlendFactor::One => gl::ONE,
-            BlendFactor::SrcColor => gl::SRC_COLOR,
-            BlendFactor::OneMinusSrcColor => gl::ONE_MINUS_SRC_COLOR,
-            BlendFactor::DstColor => gl::DST_COLOR,
-            BlendFactor::OneMinusDstColor => gl::ONE_MINUS_DST_COLOR,
-            BlendFactor::SrcAlpha => gl::SRC_ALPHA,
-            BlendFactor::OneMinusSrcAlpha => gl::ONE_MINUS_SRC_ALPHA,
-            BlendFactor::DstAlpha => gl::DST_ALPHA,
-            BlendFactor::OneMinusDstAlpha => gl::ONE_MINUS_DST_ALPHA,
-            BlendFactor::ConstantColor => gl::CONSTANT_COLOR,
-            BlendFactor::OneMinusConstantColor => gl::ONE_MINUS_CONSTANT_COLOR,
-            BlendFactor::ConstantAlpha => gl::CONSTANT_ALPHA,
-            BlendFactor::OneMinusConstantAlpha => gl::ONE_MINUS_CONSTANT_ALPHA,
-            BlendFactor::SrcAlphaSaturate => gl::SRC_ALPHA_SATURATE,
+impl Default for GlConfig {
+    fn default() -> Self {
+        Self {
+            version_major: 3,
+            version_minor: 3,
+            robustness: Robustness::RobustLoseContextOnReset,
         }
     }
 }
 
-/// Enum representing different depth testing functions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DepthType {
-    None,
-    Never,
-    Less,
-    Equal,
-    LessOrEqual,
-    Greater,
-    NotEqual,
-    GreaterOrEqual,
-    Always,
+/// Window handle that can be shared with the update callback
+pub struct WindowHandle {
+    window: Option<WinitWindow>,
+    context: Option<glutin::context::PossiblyCurrentContext>,
+    surface: Option<Surface<WindowSurface>>,
+    running: bool,
 }
 
-impl From<DepthType> for Option<gl::types::GLenum> {
-    fn from(func: DepthType) -> Self {
-        match func {
-            DepthType::None => None,
-            DepthType::Never => Some(gl::NEVER),
-            DepthType::Less => Some(gl::LESS),
-            DepthType::Equal => Some(gl::EQUAL),
-            DepthType::LessOrEqual => Some(gl::LEQUAL),
-            DepthType::Greater => Some(gl::GREATER),
-            DepthType::NotEqual => Some(gl::NOTEQUAL),
-            DepthType::GreaterOrEqual => Some(gl::GEQUAL),
-            DepthType::Always => Some(gl::ALWAYS),
+impl WindowHandle {
+    /// Get a reference to the underlying winit window
+    pub fn get_window(&self) -> Option<&WinitWindow> {
+        self.window.as_ref()
+    }
+
+    /// Check if the window is still running
+    pub fn is_running(&self) -> bool {
+        self.running
+    }
+
+    /// Request a redraw
+    pub fn request_redraw(&self) {
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+
+    /// Get the current window size
+    pub fn get_size(&self) -> Option<(u32, u32)> {
+        self.window.as_ref().map(|w| {
+            let size = w.inner_size();
+            (size.width, size.height)
+        })
+    }
+
+    /// Set window title
+    pub fn set_title(&self, title: &str) {
+        if let Some(window) = &self.window {
+            window.set_title(title);
+        }
+    }
+
+    /// Set cursor visibility
+    pub fn set_cursor_visible(&self, visible: bool) {
+        if let Some(window) = &self.window {
+            window.set_cursor_visible(visible);
         }
     }
 }
 
-/// Enum storing all different rendering types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RenderingType {
-    Points,
-    Lines,
-    Fill,
+pub struct Window {
+    handle: Rc<RefCell<WindowHandle>>,
+    window_config: WindowConfig,
+    gl_config: GlConfig,
+    user_update: Option<Box<dyn FnMut(&WindowHandle) + 'static>>,
+    gl_loaded: bool,
 }
 
-/// Enum containing all GLFW key codes converted to a custom implementation for easier usage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WindowKey {
-    Space,
-    Apostrophe,
-    Comma,
-    Minus,
-    Period,
-    Slash,
-    Num0,
-    Num1,
-    Num2,
-    Num3,
-    Num4,
-    Num5,
-    Num6,
-    Num7,
-    Num8,
-    Num9,
-    Semicolon,
-    Equal,
-    A,
-    B,
-    C,
-    D,
-    E,
-    F,
-    G,
-    H,
-    I,
-    J,
-    K,
-    L,
-    M,
-    N,
-    O,
-    P,
-    Q,
-    R,
-    S,
-    T,
-    U,
-    V,
-    W,
-    X,
-    Y,
-    Z,
-    LeftBracket,
-    Backslash,
-    RightBracket,
-    GraveAccent,
-    World1,
-    World2,
-    Escape,
-    Enter,
-    Tab,
-    Backspace,
-    Insert,
-    Delete,
-    Right,
-    Left,
-    Down,
-    Up,
-    PageUp,
-    PageDown,
-    Home,
-    End,
-    CapsLock,
-    ScrollLock,
-    NumLock,
-    PrintScreen,
-    Pause,
-    F1,
-    F2,
-    F3,
-    F4,
-    F5,
-    F6,
-    F7,
-    F8,
-    F9,
-    F10,
-    F11,
-    F12,
-    F13,
-    F14,
-    F15,
-    F16,
-    F17,
-    F18,
-    F19,
-    F20,
-    F21,
-    F22,
-    F23,
-    F24,
-    F25,
-    Kp0,
-    Kp1,
-    Kp2,
-    Kp3,
-    Kp4,
-    Kp5,
-    Kp6,
-    Kp7,
-    Kp8,
-    Kp9,
-    KpDecimal,
-    KpDivide,
-    KpMultiply,
-    KpSubtract,
-    KpAdd,
-    KpEnter,
-    KpEqual,
-    LeftShift,
-    LeftControl,
-    LeftAlt,
-    LeftSuper,
-    RightShift,
-    RightControl,
-    RightAlt,
-    RightSuper,
-    Menu,
-    Unknown,
-}
+impl Window {
+    /// Create a new window with the given configuration
+    /// Note: The window and OpenGL context will be created when the event loop starts
+    pub fn new(window_config: WindowConfig, gl_config: GlConfig) -> Self {
+        let handle = Rc::new(RefCell::new(WindowHandle {
+            window: None,
+            context: None,
+            surface: None,
+            running: true,
+        }));
 
-/// Allowing for converting between GLFW keys to Window keys.
-impl From<glfw::Key> for WindowKey {
-    fn from(glfw_key: glfw::Key) -> Self {
-        match glfw_key {
-            glfw::Key::Space => WindowKey::Space,
-            glfw::Key::Apostrophe => WindowKey::Apostrophe,
-            glfw::Key::Comma => WindowKey::Comma,
-            glfw::Key::Minus => WindowKey::Minus,
-            glfw::Key::Period => WindowKey::Period,
-            glfw::Key::Slash => WindowKey::Slash,
-            glfw::Key::Num0 => WindowKey::Num0,
-            glfw::Key::Num1 => WindowKey::Num1,
-            glfw::Key::Num2 => WindowKey::Num2,
-            glfw::Key::Num3 => WindowKey::Num3,
-            glfw::Key::Num4 => WindowKey::Num4,
-            glfw::Key::Num5 => WindowKey::Num5,
-            glfw::Key::Num6 => WindowKey::Num6,
-            glfw::Key::Num7 => WindowKey::Num7,
-            glfw::Key::Num8 => WindowKey::Num8,
-            glfw::Key::Num9 => WindowKey::Num9,
-            glfw::Key::Semicolon => WindowKey::Semicolon,
-            glfw::Key::Equal => WindowKey::Equal,
-            glfw::Key::A => WindowKey::A,
-            glfw::Key::B => WindowKey::B,
-            glfw::Key::C => WindowKey::C,
-            glfw::Key::D => WindowKey::D,
-            glfw::Key::E => WindowKey::E,
-            glfw::Key::F => WindowKey::F,
-            glfw::Key::G => WindowKey::G,
-            glfw::Key::H => WindowKey::H,
-            glfw::Key::I => WindowKey::I,
-            glfw::Key::J => WindowKey::J,
-            glfw::Key::K => WindowKey::K,
-            glfw::Key::L => WindowKey::L,
-            glfw::Key::M => WindowKey::M,
-            glfw::Key::N => WindowKey::N,
-            glfw::Key::O => WindowKey::O,
-            glfw::Key::P => WindowKey::P,
-            glfw::Key::Q => WindowKey::Q,
-            glfw::Key::R => WindowKey::R,
-            glfw::Key::S => WindowKey::S,
-            glfw::Key::T => WindowKey::T,
-            glfw::Key::U => WindowKey::U,
-            glfw::Key::V => WindowKey::V,
-            glfw::Key::W => WindowKey::W,
-            glfw::Key::X => WindowKey::X,
-            glfw::Key::Y => WindowKey::Y,
-            glfw::Key::Z => WindowKey::Z,
-            glfw::Key::LeftBracket => WindowKey::LeftBracket,
-            glfw::Key::Backslash => WindowKey::Backslash,
-            glfw::Key::RightBracket => WindowKey::RightBracket,
-            glfw::Key::GraveAccent => WindowKey::GraveAccent,
-            glfw::Key::World1 => WindowKey::World1,
-            glfw::Key::World2 => WindowKey::World2,
-            glfw::Key::Escape => WindowKey::Escape,
-            glfw::Key::Enter => WindowKey::Enter,
-            glfw::Key::Tab => WindowKey::Tab,
-            glfw::Key::Backspace => WindowKey::Backspace,
-            glfw::Key::Insert => WindowKey::Insert,
-            glfw::Key::Delete => WindowKey::Delete,
-            glfw::Key::Right => WindowKey::Right,
-            glfw::Key::Left => WindowKey::Left,
-            glfw::Key::Down => WindowKey::Down,
-            glfw::Key::Up => WindowKey::Up,
-            glfw::Key::PageUp => WindowKey::PageUp,
-            glfw::Key::PageDown => WindowKey::PageDown,
-            glfw::Key::Home => WindowKey::Home,
-            glfw::Key::End => WindowKey::End,
-            glfw::Key::CapsLock => WindowKey::CapsLock,
-            glfw::Key::ScrollLock => WindowKey::ScrollLock,
-            glfw::Key::NumLock => WindowKey::NumLock,
-            glfw::Key::PrintScreen => WindowKey::PrintScreen,
-            glfw::Key::Pause => WindowKey::Pause,
-            glfw::Key::F1 => WindowKey::F1,
-            glfw::Key::F2 => WindowKey::F2,
-            glfw::Key::F3 => WindowKey::F3,
-            glfw::Key::F4 => WindowKey::F4,
-            glfw::Key::F5 => WindowKey::F5,
-            glfw::Key::F6 => WindowKey::F6,
-            glfw::Key::F7 => WindowKey::F7,
-            glfw::Key::F8 => WindowKey::F8,
-            glfw::Key::F9 => WindowKey::F9,
-            glfw::Key::F10 => WindowKey::F10,
-            glfw::Key::F11 => WindowKey::F11,
-            glfw::Key::F12 => WindowKey::F12,
-            glfw::Key::F13 => WindowKey::F13,
-            glfw::Key::F14 => WindowKey::F14,
-            glfw::Key::F15 => WindowKey::F15,
-            glfw::Key::F16 => WindowKey::F16,
-            glfw::Key::F17 => WindowKey::F17,
-            glfw::Key::F18 => WindowKey::F18,
-            glfw::Key::F19 => WindowKey::F19,
-            glfw::Key::F20 => WindowKey::F20,
-            glfw::Key::F21 => WindowKey::F21,
-            glfw::Key::F22 => WindowKey::F22,
-            glfw::Key::F23 => WindowKey::F23,
-            glfw::Key::F24 => WindowKey::F24,
-            glfw::Key::F25 => WindowKey::F25,
-            glfw::Key::Kp0 => WindowKey::Kp0,
-            glfw::Key::Kp1 => WindowKey::Kp1,
-            glfw::Key::Kp2 => WindowKey::Kp2,
-            glfw::Key::Kp3 => WindowKey::Kp3,
-            glfw::Key::Kp4 => WindowKey::Kp4,
-            glfw::Key::Kp5 => WindowKey::Kp5,
-            glfw::Key::Kp6 => WindowKey::Kp6,
-            glfw::Key::Kp7 => WindowKey::Kp7,
-            glfw::Key::Kp8 => WindowKey::Kp8,
-            glfw::Key::Kp9 => WindowKey::Kp9,
-            glfw::Key::KpDecimal => WindowKey::KpDecimal,
-            glfw::Key::KpDivide => WindowKey::KpDivide,
-            glfw::Key::KpMultiply => WindowKey::KpMultiply,
-            glfw::Key::KpSubtract => WindowKey::KpSubtract,
-            glfw::Key::KpAdd => WindowKey::KpAdd,
-            glfw::Key::KpEnter => WindowKey::KpEnter,
-            glfw::Key::KpEqual => WindowKey::KpEqual,
-            glfw::Key::LeftShift => WindowKey::LeftShift,
-            glfw::Key::LeftControl => WindowKey::LeftControl,
-            glfw::Key::LeftAlt => WindowKey::LeftAlt,
-            glfw::Key::LeftSuper => WindowKey::LeftSuper,
-            glfw::Key::RightShift => WindowKey::RightShift,
-            glfw::Key::RightControl => WindowKey::RightControl,
-            glfw::Key::RightAlt => WindowKey::RightAlt,
-            glfw::Key::RightSuper => WindowKey::RightSuper,
-            glfw::Key::Menu => WindowKey::Menu,
-            _ => WindowKey::Unknown,
+        Self {
+            handle,
+            window_config,
+            gl_config,
+            user_update: None,
+            gl_loaded: false,
         }
+    }
+
+    fn init_gl(&mut self, event_loop: &ActiveEventLoop) {
+        // Window attributes
+        let mut attrs = WindowAttributes::default()
+            .with_title(self.window_config.title.clone())
+            .with_inner_size(LogicalSize::new(
+                self.window_config.size.0,
+                self.window_config.size.1,
+            ))
+            .with_decorations(self.window_config.decorated)
+            .with_transparent(self.window_config.translucent);
+
+        if self.window_config.fullscreen {
+            attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
+        }
+
+        // Display builder
+        let display_builder = DisplayBuilder::new().with_window_attributes(Some(attrs));
+
+        // GL config template
+        let template = ConfigTemplateBuilder::new();
+
+        let (window, gl_config) = display_builder
+            .build(event_loop, template, |mut configs| configs.next().unwrap())
+            .unwrap();
+
+        let window = window.unwrap();
+
+        if self.window_config.hide_cursor {
+            window.set_cursor_visible(false);
+        }
+
+        let window_handle = window.window_handle().unwrap().as_raw();
+
+        let context_attributes = ContextAttributesBuilder::new()
+            .with_context_api(ContextApi::OpenGl(Some(Version {
+                major: self.gl_config.version_major,
+                minor: self.gl_config.version_minor,
+            })))
+            .with_robustness(self.gl_config.robustness)
+            .build(Some(window_handle));
+
+        let not_current_context: NotCurrentContext = unsafe {
+            match gl_config.display().create_context(&gl_config, &context_attributes) {
+                Ok(ctx) => ctx,
+                Err(e) => {
+                    eprintln!(
+                        "Failed to create OpenGL context! Driver rejected OpenGL version: {}.{}\n\
+                        Your video card might be too old to support this version.\n\
+                        Please update your graphics driver.\n\nError: {}",
+                        self.gl_config.version_major,
+                        self.gl_config.version_minor,
+                        e
+                    );
+                    panic!("The application cannot continue without an OpenGL context.");
+                }
+            }
+        };
+
+        let surface_attrs = window.build_surface_attributes(Default::default()).unwrap();
+
+        let surface = unsafe {
+            gl_config
+                .display()
+                .create_window_surface(&gl_config, &surface_attrs)
+                .unwrap()
+        };
+
+        let context = not_current_context.make_current(&surface).unwrap();
+
+        // Load GL functions
+        if !self.gl_loaded {
+            gl::load_with(|symbol| {
+                let symbol_cstring = CString::new(symbol).unwrap();
+                context.display().get_proc_address(&symbol_cstring)
+            });
+            self.gl_loaded = true;
+        }
+
+        // Store window, context, and surface in the handle
+        let mut handle = self.handle.borrow_mut();
+        handle.window = Some(window);
+        handle.context = Some(context);
+        handle.surface = Some(surface);
+    }
+
+    /// Set the update callback function
+    /// The callback receives a reference to WindowHandle for accessing window properties
+    pub fn set_update_callback<F>(&mut self, callback: F)
+    where
+        F: FnMut(&WindowHandle) + 'static,
+    {
+        self.user_update = Some(Box::new(callback));
+    }
+
+    /// Start the main event loop and run the window
+    pub fn start_event_loop(mut self) {
+        // Create the single event loop
+        let event_loop = EventLoop::new().expect("Failed to create event loop");
+        event_loop.set_control_flow(ControlFlow::Wait);
+        
+        event_loop.run_app(&mut self).unwrap();
+    }
+
+    /// Convenience function to create and run a window in one call
+    pub fn run<F>(window_config: WindowConfig, gl_config: GlConfig, user_update: F)
+    where
+        F: FnMut(&WindowHandle) + 'static,
+    {
+        let mut window = Self::new(window_config, gl_config);
+        window.set_update_callback(user_update);
+        window.start_event_loop();
+    }
+
+    fn resize(&self, width: u32, height: u32) {
+        let handle = self.handle.borrow();
+        if let (Some(context), Some(surface)) = (&handle.context, &handle.surface) {
+            surface.resize(
+                context,
+                NonZeroU32::new(width).unwrap(),
+                NonZeroU32::new(height).unwrap(),
+            );
+        }
+    }
+
+    pub fn update(&mut self) {
+        let handle = self.handle.borrow();
+        
+        // Call user code if callback is set, passing the window handle
+        if let Some(ref mut callback) = self.user_update {
+            callback(&*handle);
+        }
+
+        // Swap buffers
+        if let (Some(context), Some(surface)) = (&handle.context, &handle.surface) {
+            surface.swap_buffers(context).unwrap();
+        }
+
+        // Request redraw
+        if let Some(window) = &handle.window {
+            window.request_redraw();
+        }
+    }
+
+    /// Get a reference to the window handle
+    pub fn get_handle(&self) -> Rc<RefCell<WindowHandle>> {
+        self.handle.clone()
+    }
+
+    /// Check if OpenGL has been loaded
+    pub fn is_gl_loaded(&self) -> bool {
+        self.gl_loaded
     }
 }
 
-/// Allowing for converting between GLFW keys to Window keys.
-impl From<WindowKey> for glfw::Key {
-    fn from(window_key: WindowKey) -> Self {
-        match window_key {
-            WindowKey::Space => glfw::Key::Space,
-            WindowKey::Apostrophe => glfw::Key::Apostrophe,
-            WindowKey::Comma => glfw::Key::Comma,
-            WindowKey::Minus => glfw::Key::Minus,
-            WindowKey::Period => glfw::Key::Period,
-            WindowKey::Slash => glfw::Key::Slash,
-            WindowKey::Num0 => glfw::Key::Num0,
-            WindowKey::Num1 => glfw::Key::Num1,
-            WindowKey::Num2 => glfw::Key::Num2,
-            WindowKey::Num3 => glfw::Key::Num3,
-            WindowKey::Num4 => glfw::Key::Num4,
-            WindowKey::Num5 => glfw::Key::Num5,
-            WindowKey::Num6 => glfw::Key::Num6,
-            WindowKey::Num7 => glfw::Key::Num7,
-            WindowKey::Num8 => glfw::Key::Num8,
-            WindowKey::Num9 => glfw::Key::Num9,
-            WindowKey::Semicolon => glfw::Key::Semicolon,
-            WindowKey::Equal => glfw::Key::Equal,
-            WindowKey::A => glfw::Key::A,
-            WindowKey::B => glfw::Key::B,
-            WindowKey::C => glfw::Key::C,
-            WindowKey::D => glfw::Key::D,
-            WindowKey::E => glfw::Key::E,
-            WindowKey::F => glfw::Key::F,
-            WindowKey::G => glfw::Key::G,
-            WindowKey::H => glfw::Key::H,
-            WindowKey::I => glfw::Key::I,
-            WindowKey::J => glfw::Key::J,
-            WindowKey::K => glfw::Key::K,
-            WindowKey::L => glfw::Key::L,
-            WindowKey::M => glfw::Key::M,
-            WindowKey::N => glfw::Key::N,
-            WindowKey::O => glfw::Key::O,
-            WindowKey::P => glfw::Key::P,
-            WindowKey::Q => glfw::Key::Q,
-            WindowKey::R => glfw::Key::R,
-            WindowKey::S => glfw::Key::S,
-            WindowKey::T => glfw::Key::T,
-            WindowKey::U => glfw::Key::U,
-            WindowKey::V => glfw::Key::V,
-            WindowKey::W => glfw::Key::W,
-            WindowKey::X => glfw::Key::X,
-            WindowKey::Y => glfw::Key::Y,
-            WindowKey::Z => glfw::Key::Z,
-            WindowKey::LeftBracket => glfw::Key::LeftBracket,
-            WindowKey::Backslash => glfw::Key::Backslash,
-            WindowKey::RightBracket => glfw::Key::RightBracket,
-            WindowKey::GraveAccent => glfw::Key::GraveAccent,
-            WindowKey::World1 => glfw::Key::World1,
-            WindowKey::World2 => glfw::Key::World2,
-            WindowKey::Escape => glfw::Key::Escape,
-            WindowKey::Enter => glfw::Key::Enter,
-            WindowKey::Tab => glfw::Key::Tab,
-            WindowKey::Backspace => glfw::Key::Backspace,
-            WindowKey::Insert => glfw::Key::Insert,
-            WindowKey::Delete => glfw::Key::Delete,
-            WindowKey::Right => glfw::Key::Right,
-            WindowKey::Left => glfw::Key::Left,
-            WindowKey::Down => glfw::Key::Down,
-            WindowKey::Up => glfw::Key::Up,
-            WindowKey::PageUp => glfw::Key::PageUp,
-            WindowKey::PageDown => glfw::Key::PageDown,
-            WindowKey::Home => glfw::Key::Home,
-            WindowKey::End => glfw::Key::End,
-            WindowKey::CapsLock => glfw::Key::CapsLock,
-            WindowKey::ScrollLock => glfw::Key::ScrollLock,
-            WindowKey::NumLock => glfw::Key::NumLock,
-            WindowKey::PrintScreen => glfw::Key::PrintScreen,
-            WindowKey::Pause => glfw::Key::Pause,
-            WindowKey::F1 => glfw::Key::F1,
-            WindowKey::F2 => glfw::Key::F2,
-            WindowKey::F3 => glfw::Key::F3,
-            WindowKey::F4 => glfw::Key::F4,
-            WindowKey::F5 => glfw::Key::F5,
-            WindowKey::F6 => glfw::Key::F6,
-            WindowKey::F7 => glfw::Key::F7,
-            WindowKey::F8 => glfw::Key::F8,
-            WindowKey::F9 => glfw::Key::F9,
-            WindowKey::F10 => glfw::Key::F10,
-            WindowKey::F11 => glfw::Key::F11,
-            WindowKey::F12 => glfw::Key::F12,
-            WindowKey::F13 => glfw::Key::F13,
-            WindowKey::F14 => glfw::Key::F14,
-            WindowKey::F15 => glfw::Key::F15,
-            WindowKey::F16 => glfw::Key::F16,
-            WindowKey::F17 => glfw::Key::F17,
-            WindowKey::F18 => glfw::Key::F18,
-            WindowKey::F19 => glfw::Key::F19,
-            WindowKey::F20 => glfw::Key::F20,
-            WindowKey::F21 => glfw::Key::F21,
-            WindowKey::F22 => glfw::Key::F22,
-            WindowKey::F23 => glfw::Key::F23,
-            WindowKey::F24 => glfw::Key::F24,
-            WindowKey::F25 => glfw::Key::F25,
-            WindowKey::Kp0 => glfw::Key::Kp0,
-            WindowKey::Kp1 => glfw::Key::Kp1,
-            WindowKey::Kp2 => glfw::Key::Kp2,
-            WindowKey::Kp3 => glfw::Key::Kp3,
-            WindowKey::Kp4 => glfw::Key::Kp4,
-            WindowKey::Kp5 => glfw::Key::Kp5,
-            WindowKey::Kp6 => glfw::Key::Kp6,
-            WindowKey::Kp7 => glfw::Key::Kp7,
-            WindowKey::Kp8 => glfw::Key::Kp8,
-            WindowKey::Kp9 => glfw::Key::Kp9,
-            WindowKey::KpDecimal => glfw::Key::KpDecimal,
-            WindowKey::KpDivide => glfw::Key::KpDivide,
-            WindowKey::KpMultiply => glfw::Key::KpMultiply,
-            WindowKey::KpSubtract => glfw::Key::KpSubtract,
-            WindowKey::KpAdd => glfw::Key::KpAdd,
-            WindowKey::KpEnter => glfw::Key::KpEnter,
-            WindowKey::KpEqual => glfw::Key::KpEqual,
-            WindowKey::LeftShift => glfw::Key::LeftShift,
-            WindowKey::LeftControl => glfw::Key::LeftControl,
-            WindowKey::LeftAlt => glfw::Key::LeftAlt,
-            WindowKey::LeftSuper => glfw::Key::LeftSuper,
-            WindowKey::RightShift => glfw::Key::RightShift,
-            WindowKey::RightControl => glfw::Key::RightControl,
-            WindowKey::RightAlt => glfw::Key::RightAlt,
-            WindowKey::RightSuper => glfw::Key::RightSuper,
-            WindowKey::Menu => glfw::Key::Menu,
-            WindowKey::Unknown => glfw::Key::Unknown,
+impl ApplicationHandler for Window {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // Initialize the window and OpenGL context only once
+        if self.handle.borrow().window.is_none() {
+            self.init_gl(event_loop);
+
+            // Request initial draw
+            let handle = self.handle.borrow();
+            if let Some(window) = &handle.window {
+                window.request_redraw();
+            }
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::CloseRequested => {
+                self.handle.borrow_mut().running = false;
+                event_loop.exit();
+            }
+            WindowEvent::RedrawRequested => {
+                self.update();
+            }
+            WindowEvent::Resized(size) => {
+                self.resize(size.width, size.height);
+            }
+            _ => {}
         }
     }
 }

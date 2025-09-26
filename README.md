@@ -1,44 +1,16 @@
+# FerrousGL
 
-# <img src="ferrousgl_small.png" alt="Ferrousgl" width="30"> <img src="ferrousgl_logo.png" alt="Ferrousgl" width="120">
+<a href="">Documentation</a><br>
+<a href="">Examples</a><br>
+<a href="">Website</a>
 
-[Key Features](#key-features)\
-[How to run Examples](#how-to-run-examples)\
-[Example use cases](#example-use-cases)\
-[Vision](#vision)
+**FerrousGL** is a high performance and simple-to-use Rust library for OpenGL rendering. It offers straightforward ways to handle a window, rendering, shaders, textures and meshes. This makes the development fast and clean.
 
-FerrousGL is a simple-to-use Rust library that provides simple abstractions over OpenGL and GLFW for creating graphical applications and games easier. It offers a straightforward way to handle windows, rendering, shader, textures and meshes without having to be fluent in graphics programming.
+It aims to support all commonly know OpenGL functionalities, such as the previously mentioned as well as more complicated things like custom render targets, other shader types, different buffer types and instanced rendering.
 
-The library is very simple-to-use: First you can make a window. This window serves as the foundation for rendering meshes (on the main framebuffer or a custom render texture), shaders and input.
+To use FerrousGL in your projects, just add it into your `Cargo.toml` like this:
 
-> ⚠️ **Version Warning**: This project is currently in early development, so versions below `0.1.0` may not be backwards compatible to older beta versions.
-
-## Key features
-- **Windows**: Windows are like modular bricks of a foundation, the library allows for simultaneous creation & deletion of windows and input! This allows for simple multi-window applications or debug views!
-- **Meshes**: Meshes are simple-to-use and allow for custom vertex attributes.
-- **Shaders**: You can load shaders from files or from code. There is support for uniforms and textures.
-- **Textures**: The textures allow you to load images to use in shaders and there are also render textures for rendering to an off screen buffer!
-- **Hot-Shader-Reloading**: Shaders are able to be reloaded at runtime, allowing for hot-shader-reloading.
-
-> The library is designed to be simple-to-use while providing enough flexibility for most graphics programming tasks. It handles much of the boilerplate OpenGL code while exposing many things needed for 2D/3D rendering.
-
-<img src="./screenshots/colored_pyramid.png" alt="A colored pyramid" title="A colored pyramid" width="300">
-<img src="./screenshots/textured_cube.png" alt="A wood textured cube" title="A wood textured cube" width="300">
-<img src="./screenshots/offscreen_rendering.png" alt="A rotating cube showcasing offscreen rendering." title="A rotating cube showcasing offscreen rendering." width="300">
-<img src="./screenshots/simple_water.png" alt="Animated simple water" title="Animated simple water" width="300">
-<img src="./screenshots/shadow_mapping.png" alt="Wooden rotating cube ontop of podest" title="Wooden rotating cube ontop of podest" width="300">
-<img src="./screenshots/blend_mode.png" alt="Example showing blend modes" title="Example showing blend modes" width="300">
-
-## How to run examples
-1) Download the repository
-2) Navigate into the repositories directory
-3) Run `cargo run --example` to list all available examples
-4) Run an example with `cargo run --example particles --release` to run it in release mode. Replace `particles` with the name of the example.
-
-## Example use cases
-- Graphical applications such as drawing apps
-- Games in 2D or 3D with custom engines
-- Visualizations
-- Learning OpenGL
-
-## Vision
-How did this library come into existence? A friend once told me "Graphics programming is too hard; it's not worth getting into.", so FerrousGL was born. This library doesn't focus on being the most efficient (even tho I try to keep it quite fast), but it focuses on making OpenGL more accessible easily so you can write graphically powered software more easily!
+```toml
+[dependencies]
+ferrousgl = "0.1.0"
+```

@@ -1,230 +1,145 @@
-extern crate gl;
+use std::{ffi::CString, fs, path::Path, ptr};
 
-use gl::types::*;
-use std::ffi::CString;
-use std::ptr;
+use gl;
 
-use std::fs::File;
-use std::io::Read;
-use std::path::Path;
-
-/// Represents a shader to be used for telling the GPU how to "fill in" a meshes vertices.
 pub struct Shader {
-    pub id: GLuint,
+    shader_program_id: u32,
 }
 
 impl Shader {
-    /// Creates a new shader using a vertex shader string and fragment string to create the shader.
-    /// After this it is ready to be used for rendering.
-    pub fn new_from_source(vertex_source: &str, fragment_source: &str) -> Self {
-        let vertex_shader = Shader::compile_shader(gl::VERTEX_SHADER, vertex_source).unwrap();
-        let fragment_shader = Shader::compile_shader(gl::FRAGMENT_SHADER, fragment_source).unwrap();
-        let shader_program = Shader::link_program(vertex_shader, fragment_shader).unwrap();
+    pub fn new_from_file(vertex_path: &Path, fragment_path: &Path) -> Result<Shader, String> {
+        let vertex_source = fs::read_to_string(&vertex_path)
+            .map_err(|e| format!("Failed to read vertex shader: {}", e))?;
 
-        unsafe {
-            gl::DeleteShader(vertex_shader);
-            gl::DeleteShader(fragment_shader);
-        }
+        let fragment_source = fs::read_to_string(&fragment_path)
+            .map_err(|e| format!("Failed to read fragment shader: {}", e))?;
 
-        Shader { id: shader_program }
+        Ok(Shader::new_from_sources(&[(gl::VERTEX_SHADER, &vertex_source), (gl::FRAGMENT_SHADER, &fragment_source)]).unwrap())
     }
 
-    /// Creates a new shader using a vertex shader file path and fragment file path.
-    /// After this it is ready to be used for rendering.
-    pub fn new_from_file(vertex_path: &Path, fragment_path: &Path) -> Result<Self, String> {
-        let mut vertex_file = File::open(vertex_path)
-            .map_err(|e| format!("[FerrousGl Error] Failed to open vertex shader file: {}", e))?;
-        let mut vertex_source = String::new();
-        vertex_file.read_to_string(&mut vertex_source)
-            .map_err(|e| format!("[FerrousGl Error] Failed to read vertex shader file: {}", e))?;
+    pub fn new_from_file_geometry(vertex_path: &Path, geometry_path: &Path, fragment_path: &Path) -> Result<Shader, String> {
+        let vertex_source = fs::read_to_string(vertex_path)
+            .map_err(|e| format!("Failed to read vertex shader: {}", e))?;
 
-        let mut fragment_file = File::open(fragment_path)
-            .map_err(|e| format!("[FerrousGl Error] Failed to open fragment shader file: {}", e))?;
-        let mut fragment_source = String::new();
-        fragment_file.read_to_string(&mut fragment_source)
-            .map_err(|e| format!("[FerrousGl Error] Failed to read fragment shader file: {}", e))?;
+        let geometry_source = fs::read_to_string(geometry_path)
+            .map_err(|e| format!("Failed to read geometry shader: {}", e))?;
 
-        Ok(Self::new_from_source(&vertex_source, &fragment_source))
+        let fragment_source = fs::read_to_string(fragment_path)
+            .map_err(|e| format!("Failed to read fragment shader: {}", e))?;
+
+        Ok(Shader::new_from_sources(&[
+            (gl::VERTEX_SHADER, &vertex_source),
+            (gl::GEOMETRY_SHADER, &geometry_source),
+            (gl::FRAGMENT_SHADER, &fragment_source),
+        ]).unwrap())
     }
 
-    /// Recompiles the shader from the given vertex and fragment shader files.
-    /// Returns Ok(()) on success, or an error message if compilation fails.
-    pub fn recompile_from_file(&mut self, vertex_path: &Path, fragment_path: &Path) -> Result<(), String> {
-        match Self::new_from_file(vertex_path, fragment_path) {
-            Ok(new_shader) => {
-                unsafe { gl::DeleteProgram(self.id) };
-                self.id = new_shader.id;
-                std::mem::forget(new_shader);
-                Ok(())
-            },
-            Err(e) => {
-                eprintln!("[Shader Recompile Error] {}", e);
-                Err(e)
-            }
-        }
+    // Compute shader constructor
+    pub fn new_from_file_compute(compute_path: &Path) -> Result<Shader, String> {
+        let compute_source = fs::read_to_string(compute_path)
+            .map_err(|e| format!("Failed to read compute shader: {}", e))?;
+
+        Ok(Shader::new_from_sources(&[
+            (gl::COMPUTE_SHADER, &compute_source),
+        ]).unwrap())
     }
 
-    /// Internal function to compile a shader.
-    fn compile_shader(shader_type: GLenum, source: &str) -> Result<GLuint, String> {
-        let shader = unsafe { gl::CreateShader(shader_type) };
-        let c_str = CString::new(source.as_bytes()).unwrap();
-        unsafe {
-            gl::ShaderSource(shader, 1, &c_str.as_ptr(), ptr::null());
-            gl::CompileShader(shader);
+    pub fn new_from_sources(shaders: &[(u32, &str)]) -> Result<Shader, String> {
+        let program_id = unsafe { gl::CreateProgram() };
+        let mut shader_ids = Vec::new();
+
+        for &(shader_type, source) in shaders {
+            let shader_id = unsafe { gl::CreateShader(shader_type) };
+            // Compile the shader
+            Self::compile(shader_id, source)?;
+            // Attach to the program
+            unsafe { gl::AttachShader(program_id, shader_id) };
+            shader_ids.push(shader_id);
         }
 
-        let mut success = 1;
-        unsafe {
-            gl::GetShaderiv(shader, gl::COMPILE_STATUS, &mut success);
-        }
+        let shader = Shader {
+            shader_program_id: program_id,
+        };
 
-        if success == 0 {
-            let mut len = 0;
-            unsafe {
-                gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &mut len);
-            }
+        // Link the program
+        shader.link()?;
 
-            let error = create_whitespace_cstring_with_len(len as usize);
-
-            unsafe {
-                gl::GetShaderInfoLog(shader, len, ptr::null_mut(), error.as_ptr() as *mut GLchar);
-            }
-
-            return Err(error.to_string_lossy().into_owned());
+        // Clean up individual shaders after linking
+        for &id in &shader_ids {
+            unsafe { gl::DeleteShader(id) };
         }
 
         Ok(shader)
     }
 
-    /// Internal function to link the shader program.
-    fn link_program(vertex_shader: GLuint, fragment_shader: GLuint) -> Result<GLuint, String> {
-        let program = unsafe { gl::CreateProgram() };
+    pub fn compile(shader_id: u32, source: &str) -> Result<(), String> {
         unsafe {
-            gl::AttachShader(program, vertex_shader);
-            gl::AttachShader(program, fragment_shader);
-            gl::LinkProgram(program);
-        }
+            let source_as_c_string = CString::new(source).unwrap();
+            gl::ShaderSource(shader_id, 1, &source_as_c_string.as_ptr(), ptr::null());
 
-        let mut success = 1;
-        unsafe {
-            gl::GetProgramiv(program, gl::LINK_STATUS, &mut success);
-        }
+            gl::CompileShader(shader_id);
 
-        if success == 0 {
-            let mut len = 0;
-            unsafe {
-                gl::GetProgramiv(program, gl::INFO_LOG_LENGTH, &mut len);
+            let mut success = 0;
+            gl::GetShaderiv(shader_id, gl::COMPILE_STATUS, &mut success);
+            if success == 0 {
+                let mut len = 0;
+                gl::GetShaderiv(shader_id, gl::INFO_LOG_LENGTH, &mut len);
+                let mut buffer: Vec<u8> = Vec::with_capacity(len as usize + 1);
+
+                gl::GetShaderInfoLog(
+                    shader_id,
+                    len,
+                    ptr::null_mut(),
+                    buffer.as_mut_ptr() as *mut i8,
+                );
+
+                buffer.set_len(len as usize);
+                let log = String::from_utf8_lossy(&buffer).into_owned();
+                return Err(log);
             }
 
-            let error = create_whitespace_cstring_with_len(len as usize);
-
-            unsafe {
-                gl::GetProgramInfoLog(program, len, ptr::null_mut(), error.as_ptr() as *mut GLchar);
-            }
-
-            return Err(error.to_string_lossy().into_owned());
-        }
-
-        Ok(program)
-    }
-
-    /// Binds or begins to use the shader program. All rendering after this will use this shader program.
-    /// If no shader program is bound, the GPU will now know how to render the vertices, so nothing will show on screen.
-    pub fn bind_program(&self) {
-        unsafe {
-            gl::UseProgram(self.id);
+            Ok(())
         }
     }
 
-    /// Unbinds or stops to use the shader program. All rendering done after this will not use any shader program, 
-    /// which means not binding a new shader program and trying to render something will result in nothing being shown on screen.
-    /// Always undinding shaders after they are used, will help prevent bugs and is generally good for performance.
-    pub fn unbind_program(&self) {
+    pub fn link(&self) -> Result<(), String> {
         unsafe {
-            gl::UseProgram(0);
-        }
-    }
+            gl::LinkProgram(self.shader_program_id);
 
-    /// Sets a single integer uniform with a name and value. The name of the value should be the same in code and in the shader code.
-    pub fn set_uniform_1i(&self, name: &str, value: i32) {
-        let cname = CString::new(name).unwrap();
-        unsafe {
-            let location = gl::GetUniformLocation(self.id, cname.as_ptr());
-            if location != -1 {
-                gl::Uniform1i(location, value);
+            let mut success = 0;
+            gl::GetProgramiv(self.shader_program_id, gl::LINK_STATUS, &mut success);
+            if success == 0 {
+                let mut len = 0;
+                gl::GetProgramiv(self.shader_program_id, gl::INFO_LOG_LENGTH, &mut len);
+                let mut buffer: Vec<u8> = Vec::with_capacity(len as usize + 1);
+
+                gl::GetProgramInfoLog(
+                    self.shader_program_id,
+                    len,
+                    ptr::null_mut(),
+                    buffer.as_mut_ptr() as *mut i8,
+                );
+
+                buffer.set_len(len as usize);
+                let log = String::from_utf8_lossy(&buffer).into_owned();
+                return Err(log);
             }
         }
+        Ok(())
     }
 
-    /// Set a single float uniform with a name and value. The name of the value should be the same in code and in the shader code.
-    pub fn set_uniform_1f(&self, name: &str, value: f32) {
-        let cname = CString::new(name).unwrap();
+    pub fn bind(&self) {
         unsafe {
-            let location = gl::GetUniformLocation(self.id, cname.as_ptr());
-            if location != -1 {
-                gl::Uniform1f(location, value);
-            }
-        }
-    }
-
-    /// Set a vector of 2 float uniforms with a name and value. The name of the value should be the same in code and in the shader code.
-    pub fn set_uniform_2f(&self, name: &str, value_0: f32, value_1: f32) {
-        let cname = CString::new(name).unwrap();
-        unsafe {
-            let location = gl::GetUniformLocation(self.id, cname.as_ptr());
-            if location != -1 {
-                gl::Uniform2f(location, value_0, value_1);
-            }
-        }
-    }
-
-    /// Set a vector of 3 float uniforms with a name and value. The name of the value should be the same in code and in the shader code.
-    pub fn set_uniform_3f(&self, name: &str, v0: f32, v1: f32, v2: f32) {
-        let cname = CString::new(name).unwrap();
-        unsafe {
-            let location = gl::GetUniformLocation(self.id, cname.as_ptr());
-            if location != -1 {
-                gl::Uniform3f(location, v0, v1, v2);
-            }
-        }
-    }
-
-    /// Set a vector of 4 float uniforms with a name and value. The name of the value should be the same in code and in the shader code.
-    pub fn set_uniform_4f(&self, name: &str, v0: f32, v1: f32, v2: f32, v3: f32) {
-        let cname = CString::new(name).unwrap();
-        unsafe {
-            let location = gl::GetUniformLocation(self.id, cname.as_ptr());
-            if location != -1 {
-                gl::Uniform4f(location, v0, v1, v2, v3);
-            }
-        }
-    }
-
-    // Sets a 4x4 matrix uniform with a name and value. The name of the value should be the same in code and in the shader code.
-    pub fn set_uniform_matrix_4fv(&self, name: &str, matrix: &[f32]) {
-        let cname = CString::new(name).unwrap();
-        unsafe {
-            let location = gl::GetUniformLocation(self.id, cname.as_ptr());
-            if location != -1 {
-                gl::UniformMatrix4fv(location, 1, gl::FALSE, matrix.as_ptr());
-            }
-        }
-    }
-
-    /// Sets a texture sampler uniform with a name and value. The name of the value should be the same in code and in the shader code.
-    pub fn set_uniform_texture(&self, name: &str, texture_unit: u32) {
-        let cname = CString::new(name).unwrap();
-        unsafe {
-            let location = gl::GetUniformLocation(self.id, cname.as_ptr());
-            if location != -1 {
-                gl::Uniform1i(location, texture_unit as i32);
-            }
+            gl::UseProgram(self.shader_program_id);
         }
     }
 }
 
-fn create_whitespace_cstring_with_len(len: usize) -> CString {
-    let mut buffer: Vec<u8> = Vec::with_capacity(len + 1);
-    buffer.extend([b' '].iter().cycle().take(len));
-    unsafe { CString::from_vec_unchecked(buffer) }
+impl Drop for Shader {
+    fn drop(&mut self) {
+        println!("Dropping shader: {}", self.shader_program_id);
+        unsafe {
+            gl::DeleteProgram(self.shader_program_id);
+        }
+    }
 }

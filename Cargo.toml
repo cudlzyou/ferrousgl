@@ -1,27 +1,12 @@
 [package]
-name = "ferrousgl"
-version = "0.0.21"
-edition = "2021"
-authors = ["Unidreow <equalsstr@gmail.com>"]
-description = "Simple-to-use Rust library that provides simple abstractions over OpenGL and GLFW for creating graphical applications and games easier."
-readme = "README.md"
-license = "MIT"
-repository = "https://github.com/unidreow/ferrousgl"
-
-[lib]
-name = "ferrousgl"
-path = "src/lib.rs"
-crate-type = ["lib"]
+name = "ferrousgl2"
+version = "0.1.0"
+edition = "2024"
 
 [dependencies]
+winit = "0.30"
+glutin = "0.32"
+glutin-winit = "0.5"
 gl = "0.14"
-glfw = "0.59.0"
-glam = "0.30.4"
-glm = "0.2.3"
-image = "0.25.6"
-rusttype = "0.9.3"
-rand = "0.9.1"
-notify = "8.1.0"
-
-[package.metadata.docs.rs]
-all-features = true
+raw-window-handle = "0.6"
+glfw = "0.60.0"
