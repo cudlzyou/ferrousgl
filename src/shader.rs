@@ -1,9 +1,21 @@
-use std::{ffi::CString, fs, path::Path, ptr};
+use std::{collections::HashMap, ffi::CString, fs, path::Path, ptr};
 
 use gl;
 
+use glam::{Mat4, Vec2, Vec3, Vec4};
+
+pub enum UniformValue {
+    Int(i32),
+    Float(f32),
+    Vec2(Vec2),
+    Vec3(Vec3),
+    Vec4(Vec4),
+    Mat4(Mat4),
+}
+
 pub struct Shader {
     shader_program_id: u32,
+    uniform_cache: HashMap<String, i32>,
 }
 
 impl Shader {
@@ -59,6 +71,7 @@ impl Shader {
 
         let shader = Shader {
             shader_program_id: program_id,
+            uniform_cache: HashMap::new(),
         };
 
         // Link the program
@@ -102,7 +115,7 @@ impl Shader {
         }
     }
 
-    pub fn link(&self) -> Result<(), String> {
+    fn link(&self) -> Result<(), String> {
         unsafe {
             gl::LinkProgram(self.shader_program_id);
 
@@ -131,6 +144,43 @@ impl Shader {
     pub fn bind(&self) {
         unsafe {
             gl::UseProgram(self.shader_program_id);
+        }
+    }
+
+    fn get_uniform_location(&mut self, name: &str) -> i32 {
+        if let Some(&loc) = self.uniform_cache.get(name) {
+            return loc;
+        }
+
+        let c_name = CString::new(name).expect("Uniform name contained null byte");
+        let location = unsafe { gl::GetUniformLocation(self.shader_program_id, c_name.as_ptr()) };
+
+        // Cache the location (even if -1, so we don't keep asking GL)
+        self.uniform_cache.insert(name.to_string(), location);
+        location
+    }
+
+    pub fn set_uniform(&mut self, name: &str, value: UniformValue) {
+        let location = self.get_uniform_location(name);
+        if location == -1 {
+            // Uniform not found in shader, silently ignore or log
+            return;
+        }
+
+        unsafe {
+            match value {
+                UniformValue::Int(v) => gl::Uniform1i(location, v),
+                UniformValue::Float(v) => gl::Uniform1f(location, v),
+                UniformValue::Vec2(v) => gl::Uniform2f(location, v.x, v.y),
+                UniformValue::Vec3(v) => gl::Uniform3f(location, v.x, v.y, v.z),
+                UniformValue::Vec4(v) => gl::Uniform4f(location, v.x, v.y, v.z, v.w),
+                UniformValue::Mat4(m) => gl::UniformMatrix4fv(
+                    location,
+                    1,
+                    gl::FALSE,
+                    m.to_cols_array().as_ptr(),
+                ),
+            }
         }
     }
 }
