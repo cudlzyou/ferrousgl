@@ -19,6 +19,14 @@ pub struct Shader {
 }
 
 impl Shader {
+    /// Create an empty shader object. Use it to declare it outside somewhere and initialize after The gl context was laoded.
+    pub fn empty() -> Shader {
+        Shader {
+            shader_program_id: 0, // 0 means "no OpenGL program yet"
+            uniform_cache: HashMap::new(),
+        }
+    }
+
     pub fn new_from_file(vertex_path: &Path, fragment_path: &Path) -> Result<Shader, String> {
         let vertex_source = fs::read_to_string(&vertex_path)
             .map_err(|e| format!("Failed to read vertex shader: {}", e))?;

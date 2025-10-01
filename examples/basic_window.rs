@@ -10,15 +10,20 @@ fn main() {
     // GL context is created and loaded immediately
     let mut window = Window::new(window_config, gl_config);
 
-    let mut frames = 0;
+    let mut shader= Shader::empty();
+
+    window.set_init_callback(move || {
+        println!("initializing!");
+
+        shader = Shader::new_from_file(
+            Path::new("./examples/assets/shaders/color.vert"),
+            Path::new("./examples/assets/shaders/color.frag"),
+        )
+        .unwrap();
+    });
 
     // The callback now receives a WindowHandle reference
     window.set_update_callback(move |handle| {
-        if frames == 0 {
-            let mut shader = Shader::new_from_file(Path::new("./examples/assets/shaders/color.vert"), Path::new("./examples/assets/shaders/color.frag")).unwrap();
-        }
-        frames += 1;
-
         // Access window properties
         if let Some(size) = handle.get_size() {
             println!("Window size: {}x{}", size.0, size.1);

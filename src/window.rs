@@ -7,7 +7,7 @@ use glutin::{
 };
 use glutin_winit::{DisplayBuilder, GlWindow};
 use raw_window_handle::HasWindowHandle;
-use std::{ffi::CString, num::NonZeroU32, rc::Rc, cell::RefCell};
+use std::{cell::RefCell, ffi::CString, num::NonZeroU32, rc::Rc};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -114,6 +114,7 @@ pub struct Window {
     window_config: WindowConfig,
     gl_config: GlConfig,
     user_update: Option<Box<dyn FnMut(&WindowHandle) + 'static>>,
+    user_init: Option<Box<dyn FnOnce() + 'static>>,
     gl_loaded: bool,
 }
 
@@ -133,6 +134,7 @@ impl Window {
             window_config,
             gl_config,
             user_update: None,
+            user_init: None,
             gl_loaded: false,
         }
     }
@@ -179,16 +181,17 @@ impl Window {
             .build(Some(window_handle));
 
         let not_current_context: NotCurrentContext = unsafe {
-            match gl_config.display().create_context(&gl_config, &context_attributes) {
+            match gl_config
+                .display()
+                .create_context(&gl_config, &context_attributes)
+            {
                 Ok(ctx) => ctx,
                 Err(e) => {
                     eprintln!(
                         "Failed to create OpenGL context! Driver rejected OpenGL version: {}.{}\n\
                         Your video card might be too old to support this version.\n\
                         Please update your graphics driver.\n\nError: {}",
-                        self.gl_config.version_major,
-                        self.gl_config.version_minor,
-                        e
+                        self.gl_config.version_major, self.gl_config.version_minor, e
                     );
                     panic!("The application cannot continue without an OpenGL context.");
                 }
@@ -231,22 +234,31 @@ impl Window {
         self.user_update = Some(Box::new(callback));
     }
 
+    pub fn set_init_callback<F>(&mut self, callback: F)
+    where
+        F: FnOnce() + 'static,
+    {
+        self.user_init = Some(Box::new(callback));
+    }
+
     /// Start the main event loop and run the window
     pub fn start_event_loop(mut self) {
         // Create the single event loop
         let event_loop = EventLoop::new().expect("Failed to create event loop");
         event_loop.set_control_flow(ControlFlow::Wait);
-        
+
         event_loop.run_app(&mut self).unwrap();
     }
 
     /// Convenience function to create and run a window in one call
-    pub fn run<F>(window_config: WindowConfig, gl_config: GlConfig, user_update: F)
+    pub fn run<U, I>(window_config: WindowConfig, gl_config: GlConfig, user_update: U, user_init: I)
     where
-        F: FnMut(&WindowHandle) + 'static,
+        U: FnMut(&WindowHandle) + 'static,
+        I: FnOnce() + 'static,
     {
         let mut window = Self::new(window_config, gl_config);
         window.set_update_callback(user_update);
+        window.set_init_callback(user_init);
         window.start_event_loop();
     }
 
@@ -263,7 +275,7 @@ impl Window {
 
     pub fn update(&mut self) {
         let handle = self.handle.borrow();
-        
+
         // Call user code if callback is set, passing the window handle
         if let Some(ref mut callback) = self.user_update {
             callback(&*handle);
