@@ -7,12 +7,15 @@ use glutin::{
 };
 use glutin_winit::{DisplayBuilder, GlWindow};
 use raw_window_handle::HasWindowHandle;
+use std::thread;
+use std::time::{Duration, Instant};
 use std::{cell::RefCell, ffi::CString, num::NonZeroU32, rc::Rc};
+use winit::window::WindowButtons;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
     event::WindowEvent,
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    event_loop::{ActiveEventLoop, EventLoop},
     window::{Fullscreen, Window as WinitWindow, WindowAttributes},
 };
 
@@ -66,6 +69,9 @@ pub struct WindowHandle {
     context: Option<glutin::context::PossiblyCurrentContext>,
     surface: Option<Surface<WindowSurface>>,
     running: bool,
+    frame_count: i32,
+    frame_time: f32,
+    last_frame_time: Instant,
 }
 
 impl WindowHandle {
@@ -107,6 +113,19 @@ impl WindowHandle {
             window.set_cursor_visible(visible);
         }
     }
+
+    pub fn get_frames_count(&self) -> i32 {
+        self.frame_count
+    }
+
+    pub fn get_frame_time(&self) -> f32 {
+        self.frame_time
+    }
+
+    /// Convinience function to be able to easily initialize shaders, load textures
+    pub fn just_initialized(&self) -> bool {
+        self.frame_count == 0
+    }
 }
 
 pub struct Window {
@@ -114,7 +133,6 @@ pub struct Window {
     window_config: WindowConfig,
     gl_config: GlConfig,
     user_update: Option<Box<dyn FnMut(&WindowHandle) + 'static>>,
-    user_init: Option<Box<dyn FnOnce() + 'static>>,
     gl_loaded: bool,
 }
 
@@ -127,6 +145,9 @@ impl Window {
             context: None,
             surface: None,
             running: true,
+            frame_count: 0,
+            frame_time: 0.0,
+            last_frame_time: Instant::now(),
         }));
 
         Self {
@@ -134,7 +155,6 @@ impl Window {
             window_config,
             gl_config,
             user_update: None,
-            user_init: None,
             gl_loaded: false,
         }
     }
@@ -148,7 +168,8 @@ impl Window {
                 self.window_config.size.1,
             ))
             .with_decorations(self.window_config.decorated)
-            .with_transparent(self.window_config.translucent);
+            .with_transparent(self.window_config.translucent)
+            .with_enabled_buttons(WindowButtons::all());
 
         if self.window_config.fullscreen {
             attrs = attrs.with_fullscreen(Some(Fullscreen::Borderless(None)));
@@ -234,31 +255,22 @@ impl Window {
         self.user_update = Some(Box::new(callback));
     }
 
-    pub fn set_init_callback<F>(&mut self, callback: F)
-    where
-        F: FnOnce() + 'static,
-    {
-        self.user_init = Some(Box::new(callback));
-    }
-
     /// Start the main event loop and run the window
     pub fn start_event_loop(mut self) {
         // Create the single event loop
         let event_loop = EventLoop::new().expect("Failed to create event loop");
-        event_loop.set_control_flow(ControlFlow::Wait);
 
         event_loop.run_app(&mut self).unwrap();
     }
 
     /// Convenience function to create and run a window in one call
-    pub fn run<U, I>(window_config: WindowConfig, gl_config: GlConfig, user_update: U, user_init: I)
+    pub fn run<U, I>(window_config: WindowConfig, gl_config: GlConfig, user_update: U)
     where
         U: FnMut(&WindowHandle) + 'static,
         I: FnOnce() + 'static,
     {
         let mut window = Self::new(window_config, gl_config);
         window.set_update_callback(user_update);
-        window.set_init_callback(user_init);
         window.start_event_loop();
     }
 
@@ -274,19 +286,31 @@ impl Window {
     }
 
     pub fn update(&mut self) {
-        let handle = self.handle.borrow();
+        let mut handle = self.handle.borrow_mut();
+        let now = Instant::now();
+        let mut frame_time = (now - handle.last_frame_time).as_micros() as f32;
 
-        // Call user code if callback is set, passing the window handle
+        if let Some(fps) = self.window_config.framerate {
+            let target_frame_time = 1_000_000.0 / fps as f32;
+            if frame_time < target_frame_time {
+                thread::sleep(Duration::from_micros((target_frame_time - frame_time) as u64));
+                frame_time = target_frame_time;
+            }
+        }
+
+        handle.frame_time = frame_time;
+        handle.last_frame_time = Instant::now();
+
         if let Some(ref mut callback) = self.user_update {
             callback(&*handle);
         }
 
-        // Swap buffers
         if let (Some(context), Some(surface)) = (&handle.context, &handle.surface) {
             surface.swap_buffers(context).unwrap();
         }
 
-        // Request redraw
+        handle.frame_count += 1;
+
         if let Some(window) = &handle.window {
             window.request_redraw();
         }

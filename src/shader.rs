@@ -10,6 +10,7 @@ pub enum UniformValue {
     Vec2(Vec2),
     Vec3(Vec3),
     Vec4(Vec4),
+    Mat3(Mat4),
     Mat4(Mat4),
 }
 
@@ -34,10 +35,17 @@ impl Shader {
         let fragment_source = fs::read_to_string(&fragment_path)
             .map_err(|e| format!("Failed to read fragment shader: {}", e))?;
 
-        Ok(Shader::new_from_sources(&[(gl::VERTEX_SHADER, &vertex_source), (gl::FRAGMENT_SHADER, &fragment_source)]).unwrap())
+        Ok(Shader::new_from_sources(&[
+            (gl::VERTEX_SHADER, &vertex_source),
+            (gl::FRAGMENT_SHADER, &fragment_source),
+        ]).unwrap())
     }
 
-    pub fn new_from_file_geometry(vertex_path: &Path, geometry_path: &Path, fragment_path: &Path) -> Result<Shader, String> {
+    pub fn new_from_file_geometry(
+        vertex_path: &Path,
+        geometry_path: &Path,
+        fragment_path: &Path,
+    ) -> Result<Shader, String> {
         let vertex_source = fs::read_to_string(vertex_path)
             .map_err(|e| format!("Failed to read vertex shader: {}", e))?;
 
@@ -51,7 +59,8 @@ impl Shader {
             (gl::VERTEX_SHADER, &vertex_source),
             (gl::GEOMETRY_SHADER, &geometry_source),
             (gl::FRAGMENT_SHADER, &fragment_source),
-        ]).unwrap())
+        ])
+        .unwrap())
     }
 
     // Compute shader constructor
@@ -59,9 +68,7 @@ impl Shader {
         let compute_source = fs::read_to_string(compute_path)
             .map_err(|e| format!("Failed to read compute shader: {}", e))?;
 
-        Ok(Shader::new_from_sources(&[
-            (gl::COMPUTE_SHADER, &compute_source),
-        ]).unwrap())
+        Ok(Shader::new_from_sources(&[(gl::COMPUTE_SHADER, &compute_source)]).unwrap())
     }
 
     pub fn new_from_sources(shaders: &[(u32, &str)]) -> Result<Shader, String> {
@@ -150,8 +157,12 @@ impl Shader {
     }
 
     pub fn bind(&self) {
-        unsafe {
-            gl::UseProgram(self.shader_program_id);
+        if self.shader_program_id != 0 {
+            unsafe {
+                gl::UseProgram(self.shader_program_id);
+            }
+        } else {
+            panic!("Shader is not initialized!")
         }
     }
 
@@ -182,12 +193,12 @@ impl Shader {
                 UniformValue::Vec2(v) => gl::Uniform2f(location, v.x, v.y),
                 UniformValue::Vec3(v) => gl::Uniform3f(location, v.x, v.y, v.z),
                 UniformValue::Vec4(v) => gl::Uniform4f(location, v.x, v.y, v.z, v.w),
-                UniformValue::Mat4(m) => gl::UniformMatrix4fv(
-                    location,
-                    1,
-                    gl::FALSE,
-                    m.to_cols_array().as_ptr(),
-                ),
+                UniformValue::Mat3(m) => {
+                    gl::UniformMatrix3fv(location, 1, gl::FALSE, m.to_cols_array().as_ptr())
+                }
+                UniformValue::Mat4(m) => {
+                    gl::UniformMatrix4fv(location, 1, gl::FALSE, m.to_cols_array().as_ptr())
+                }
             }
         }
     }
