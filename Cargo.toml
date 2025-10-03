@@ -10,3 +10,5 @@ glutin-winit = "0.5"
 gl = "0.14"
 raw-window-handle = "0.6"
 glam = "0.30.8"
+
+noise = "0.9.0"
