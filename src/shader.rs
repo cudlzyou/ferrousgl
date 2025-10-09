@@ -1,18 +1,6 @@
-use std::{collections::HashMap, ffi::CString, fs, path::Path, ptr};
-
+use std::{ collections::HashMap, ffi::CString, fs, path::Path, ptr };
 use gl;
-
-use glam::{Mat4, Vec2, Vec3, Vec4};
-
-pub enum UniformValue {
-    Int(i32),
-    Float(f32),
-    Vec2(Vec2),
-    Vec3(Vec3),
-    Vec4(Vec4),
-    Mat3(Mat4),
-    Mat4(Mat4),
-}
+use crate::ShaderDataType;
 
 pub struct Shader {
     shader_program_id: u32,
@@ -29,43 +17,56 @@ impl Shader {
     }
 
     pub fn new_from_file(vertex_path: &Path, fragment_path: &Path) -> Result<Shader, String> {
-        let vertex_source = fs::read_to_string(&vertex_path)
+        let vertex_source = fs
+            ::read_to_string(&vertex_path)
             .map_err(|e| format!("Failed to read vertex shader: {}", e))?;
 
-        let fragment_source = fs::read_to_string(&fragment_path)
+        let fragment_source = fs
+            ::read_to_string(&fragment_path)
             .map_err(|e| format!("Failed to read fragment shader: {}", e))?;
 
-        Ok(Shader::new_from_sources(&[
-            (gl::VERTEX_SHADER, &vertex_source),
-            (gl::FRAGMENT_SHADER, &fragment_source),
-        ]).unwrap())
+        Ok(
+            Shader::new_from_sources(
+                &[
+                    (gl::VERTEX_SHADER, &vertex_source),
+                    (gl::FRAGMENT_SHADER, &fragment_source),
+                ]
+            ).unwrap()
+        )
     }
 
     pub fn new_from_file_geometry(
         vertex_path: &Path,
         geometry_path: &Path,
-        fragment_path: &Path,
+        fragment_path: &Path
     ) -> Result<Shader, String> {
-        let vertex_source = fs::read_to_string(vertex_path)
+        let vertex_source = fs
+            ::read_to_string(vertex_path)
             .map_err(|e| format!("Failed to read vertex shader: {}", e))?;
 
-        let geometry_source = fs::read_to_string(geometry_path)
+        let geometry_source = fs
+            ::read_to_string(geometry_path)
             .map_err(|e| format!("Failed to read geometry shader: {}", e))?;
 
-        let fragment_source = fs::read_to_string(fragment_path)
+        let fragment_source = fs
+            ::read_to_string(fragment_path)
             .map_err(|e| format!("Failed to read fragment shader: {}", e))?;
 
-        Ok(Shader::new_from_sources(&[
-            (gl::VERTEX_SHADER, &vertex_source),
-            (gl::GEOMETRY_SHADER, &geometry_source),
-            (gl::FRAGMENT_SHADER, &fragment_source),
-        ])
-        .unwrap())
+        Ok(
+            Shader::new_from_sources(
+                &[
+                    (gl::VERTEX_SHADER, &vertex_source),
+                    (gl::GEOMETRY_SHADER, &geometry_source),
+                    (gl::FRAGMENT_SHADER, &fragment_source),
+                ]
+            ).unwrap()
+        )
     }
 
     // Compute shader constructor
     pub fn new_from_file_compute(compute_path: &Path) -> Result<Shader, String> {
-        let compute_source = fs::read_to_string(compute_path)
+        let compute_source = fs
+            ::read_to_string(compute_path)
             .map_err(|e| format!("Failed to read compute shader: {}", e))?;
 
         Ok(Shader::new_from_sources(&[(gl::COMPUTE_SHADER, &compute_source)]).unwrap())
@@ -80,7 +81,9 @@ impl Shader {
             // Compile the shader
             Self::compile(shader_id, source)?;
             // Attach to the program
-            unsafe { gl::AttachShader(program_id, shader_id) };
+            unsafe {
+                gl::AttachShader(program_id, shader_id);
+            }
             shader_ids.push(shader_id);
         }
 
@@ -94,7 +97,9 @@ impl Shader {
 
         // Clean up individual shaders after linking
         for &id in &shader_ids {
-            unsafe { gl::DeleteShader(id) };
+            unsafe {
+                gl::DeleteShader(id);
+            }
         }
 
         Ok(shader)
@@ -112,13 +117,13 @@ impl Shader {
             if success == 0 {
                 let mut len = 0;
                 gl::GetShaderiv(shader_id, gl::INFO_LOG_LENGTH, &mut len);
-                let mut buffer: Vec<u8> = Vec::with_capacity(len as usize + 1);
+                let mut buffer: Vec<u8> = Vec::with_capacity((len as usize) + 1);
 
                 gl::GetShaderInfoLog(
                     shader_id,
                     len,
                     ptr::null_mut(),
-                    buffer.as_mut_ptr() as *mut i8,
+                    buffer.as_mut_ptr() as *mut i8
                 );
 
                 buffer.set_len(len as usize);
@@ -139,13 +144,13 @@ impl Shader {
             if success == 0 {
                 let mut len = 0;
                 gl::GetProgramiv(self.shader_program_id, gl::INFO_LOG_LENGTH, &mut len);
-                let mut buffer: Vec<u8> = Vec::with_capacity(len as usize + 1);
+                let mut buffer: Vec<u8> = Vec::with_capacity((len as usize) + 1);
 
                 gl::GetProgramInfoLog(
                     self.shader_program_id,
                     len,
                     ptr::null_mut(),
-                    buffer.as_mut_ptr() as *mut i8,
+                    buffer.as_mut_ptr() as *mut i8
                 );
 
                 buffer.set_len(len as usize);
@@ -179,7 +184,7 @@ impl Shader {
         location
     }
 
-    pub fn set_uniform(&mut self, name: &str, value: UniformValue) {
+    pub fn set_uniform(&mut self, name: &str, value: ShaderDataType) {
         let location = self.get_uniform_location(name);
         if location == -1 {
             // Uniform not found in shader, silently ignore or log
@@ -188,15 +193,15 @@ impl Shader {
 
         unsafe {
             match value {
-                UniformValue::Int(v) => gl::Uniform1i(location, v),
-                UniformValue::Float(v) => gl::Uniform1f(location, v),
-                UniformValue::Vec2(v) => gl::Uniform2f(location, v.x, v.y),
-                UniformValue::Vec3(v) => gl::Uniform3f(location, v.x, v.y, v.z),
-                UniformValue::Vec4(v) => gl::Uniform4f(location, v.x, v.y, v.z, v.w),
-                UniformValue::Mat3(m) => {
+                ShaderDataType::Int(v) => gl::Uniform1i(location, v),
+                ShaderDataType::Float(v) => gl::Uniform1f(location, v),
+                ShaderDataType::Vec2(v) => gl::Uniform2f(location, v.x, v.y),
+                ShaderDataType::Vec3(v) => gl::Uniform3f(location, v.x, v.y, v.z),
+                ShaderDataType::Vec4(v) => gl::Uniform4f(location, v.x, v.y, v.z, v.w),
+                ShaderDataType::Mat3(m) => {
                     gl::UniformMatrix3fv(location, 1, gl::FALSE, m.to_cols_array().as_ptr())
                 }
-                UniformValue::Mat4(m) => {
+                ShaderDataType::Mat4(m) => {
                     gl::UniformMatrix4fv(location, 1, gl::FALSE, m.to_cols_array().as_ptr())
                 }
             }
@@ -208,7 +213,9 @@ impl Drop for Shader {
     fn drop(&mut self) {
         println!("Dropping shader: {}", self.shader_program_id);
         unsafe {
-            gl::DeleteProgram(self.shader_program_id);
+            if self.shader_program_id != 0 {
+                gl::DeleteProgram(self.shader_program_id);
+            }
         }
     }
 }

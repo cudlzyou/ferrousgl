@@ -7,10 +7,11 @@ use glutin::{
 };
 use glutin_winit::{DisplayBuilder, GlWindow};
 use raw_window_handle::HasWindowHandle;
+use winit::dpi::LogicalPosition;
 use std::thread;
 use std::time::{Duration, Instant};
 use std::{cell::RefCell, ffi::CString, num::NonZeroU32, rc::Rc};
-use winit::window::WindowButtons;
+use winit::window::{WindowButtons, WindowLevel};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -19,114 +20,9 @@ use winit::{
     window::{Fullscreen, Window as WinitWindow, WindowAttributes},
 };
 
-/// Window configuration options
-pub struct WindowConfig {
-    pub size: (u32, u32),
-    pub title: String,
-    pub fullscreen: bool,
-    pub decorated: bool,
-    pub translucent: bool,
-    pub hide_cursor: bool,
-    pub vsync: bool,
-    pub framerate: Option<u32>,
-}
-
-impl Default for WindowConfig {
-    fn default() -> Self {
-        Self {
-            size: (800, 600),
-            title: "FerrousGL Window".to_string(),
-            fullscreen: false,
-            decorated: true,
-            translucent: false,
-            hide_cursor: false,
-            vsync: false,
-            framerate: None,
-        }
-    }
-}
-
-/// Graphics (OpenGL) configuration options
-pub struct GlConfig {
-    pub version_major: u8,
-    pub version_minor: u8,
-    pub robustness: Robustness,
-}
-
-impl Default for GlConfig {
-    fn default() -> Self {
-        Self {
-            version_major: 3,
-            version_minor: 3,
-            robustness: Robustness::RobustLoseContextOnReset,
-        }
-    }
-}
-
-/// Window handle that can be shared with the update callback
-pub struct WindowHandle {
-    window: Option<WinitWindow>,
-    context: Option<glutin::context::PossiblyCurrentContext>,
-    surface: Option<Surface<WindowSurface>>,
-    running: bool,
-    frame_count: i32,
-    frame_time: f32,
-    last_frame_time: Instant,
-}
-
-impl WindowHandle {
-    /// Get a reference to the underlying winit window
-    pub fn get_window(&self) -> Option<&WinitWindow> {
-        self.window.as_ref()
-    }
-
-    /// Check if the window is still running
-    pub fn is_running(&self) -> bool {
-        self.running
-    }
-
-    /// Request a redraw
-    pub fn request_redraw(&self) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
-    }
-
-    /// Get the current window size
-    pub fn get_size(&self) -> Option<(u32, u32)> {
-        self.window.as_ref().map(|w| {
-            let size = w.inner_size();
-            (size.width, size.height)
-        })
-    }
-
-    /// Set window title
-    pub fn set_title(&self, title: &str) {
-        if let Some(window) = &self.window {
-            window.set_title(title);
-        }
-    }
-
-    /// Set cursor visibility
-    pub fn set_cursor_visible(&self, visible: bool) {
-        if let Some(window) = &self.window {
-            window.set_cursor_visible(visible);
-        }
-    }
-
-    pub fn get_frames_count(&self) -> i32 {
-        self.frame_count
-    }
-
-    pub fn get_frame_time(&self) -> f32 {
-        self.frame_time
-    }
-
-    /// Convinience function to be able to easily initialize shaders, load textures
-    pub fn just_initialized(&self) -> bool {
-        self.frame_count == 0
-    }
-}
+use crate::window::window_handle::WindowHandle;
+use crate::window::window_config::WindowConfig;
+use crate::window::context_config::GlConfig;
 
 pub struct Window {
     handle: Rc<RefCell<WindowHandle>>,
@@ -169,6 +65,10 @@ impl Window {
             ))
             .with_decorations(self.window_config.decorated)
             .with_transparent(self.window_config.translucent)
+            .with_position(LogicalPosition::new(
+                self.window_config.position.0,
+                self.window_config.position.1,
+            ))
             .with_enabled_buttons(WindowButtons::all());
 
         if self.window_config.fullscreen {
@@ -186,6 +86,13 @@ impl Window {
             .unwrap();
 
         let window = window.unwrap();
+        if self.window_config.clickthrough {
+            let _ = window.set_cursor_hittest(false);
+        }
+
+        if self.window_config.always_on_top {
+            window.set_window_level(WindowLevel::AlwaysOnTop);
+        }
 
         if self.window_config.hide_cursor {
             window.set_cursor_visible(false);

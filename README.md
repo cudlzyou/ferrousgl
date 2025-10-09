@@ -14,3 +14,13 @@ To use FerrousGL in your projects, just add it into your `Cargo.toml` like this:
 [dependencies]
 ferrousgl = "0.1.0"
 ```
+
+## Current Features
+- Instanced Rendering
+- Fragment, Vertex, Compute, Geometry (untested) Shaders
+- Window with configuration and selectable OpenGL versions
+- More on the way
+
+## Examples
+Rendering 1,048,576 blades of grass (each 5 polygons) smoothly on an RTX 3050
+<img src="./screenshots/instanced_grass.png">
