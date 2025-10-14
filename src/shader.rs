@@ -8,7 +8,7 @@ pub struct Shader {
 }
 
 impl Shader {
-    /// Create an empty shader object. Use it to declare it outside somewhere and initialize after The gl context was laoded.
+    /// Create an empty shader object. Use it to declare it outside somewhere and initialize after The gl context was loaded.
     pub fn empty() -> Shader {
         Shader {
             shader_program_id: 0, // 0 means "no OpenGL program yet"
@@ -31,7 +31,7 @@ impl Shader {
                     (gl::VERTEX_SHADER, &vertex_source),
                     (gl::FRAGMENT_SHADER, &fragment_source),
                 ]
-            ).unwrap()
+            )?
         )
     }
 
@@ -59,7 +59,7 @@ impl Shader {
                     (gl::GEOMETRY_SHADER, &geometry_source),
                     (gl::FRAGMENT_SHADER, &fragment_source),
                 ]
-            ).unwrap()
+            )?
         )
     }
 

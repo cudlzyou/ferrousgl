@@ -21,7 +21,7 @@ fn main() {
 
 
             // Define the vertices of one triangle with colors as rgb
-            let vertices = &[
+            let vertices = vec![
                 // positions      // colors
                 0.0, 0.5, 0.0,    1.0, 0.0, 0.0, // top vertex (red)
                 -0.5, -0.5, 0.0,  0.0, 1.0, 0.0, // bottom left vertex (green)
@@ -29,15 +29,19 @@ fn main() {
             ];
 
             // Define the vertex attributes: position (vec3) and color (vec3)
-            let attributes = &[
+            let attributes = vec![
                 VertexAttribute::new(0, 3, 6, 0), // position (vec3)
                 VertexAttribute::new(1, 3, 6, 3), // color (vec3)
             ];
 
-            // Setup a simple triangle mesh
-            triangle_mesh.new(vertices, attributes);
+            // Set up a simple triangle mesh
+            triangle_mesh = Mesh::new(MeshConfig {
+                vertices,
+                attributes,
+                ..Default::default()
+            });
 
-            // Setup the color shader
+            // Set up the color shader
             color_shader = Shader::new_from_file(
                 Path::new("./examples/assets/shaders/color.vert"),
                 Path::new("./examples/assets/shaders/color.frag"),

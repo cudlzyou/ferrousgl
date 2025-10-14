@@ -18,7 +18,7 @@ impl Default for WindowConfig {
         Self {
             size: (800, 600),
             position: (100, 100),
-            title: "FerrousGL Window".to_string(),
+            title: format!("FerrousGL(v.{}) Windowed Application", env!("CARGO_PKG_VERSION")),
             fullscreen: false,
             decorated: true,
             translucent: false,

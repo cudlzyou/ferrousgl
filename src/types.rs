@@ -10,6 +10,22 @@ pub enum ShaderDataType {
     Mat4(Mat4),
 }
 
+pub enum BufferUsageHint {
+    StaticDraw,
+    DynamicDraw,
+    StreamDraw,
+}
+
+pub enum PrimitveType {
+    Point,
+    Line,
+    LineStrip,
+    LineLoop,
+    Triangle,
+    TriangleStrip,
+    TriangleFan,
+}
+
 pub struct VertexAttribute {
     pub location: u32,
     pub size: i32,

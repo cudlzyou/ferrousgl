@@ -1,7 +1,7 @@
 # FerrousGL
 
 <a href="">Documentation</a><br>
-<a href="">Examples</a><br>
+<a href="#current-features">Features</a><br>
 <a href="">Website</a>
 
 **FerrousGL** is a high performance and simple-to-use Rust library for OpenGL rendering. It offers straightforward ways to handle a window, rendering, shaders, textures and meshes. This makes the development fast and clean.
@@ -15,12 +15,13 @@ To use FerrousGL in your projects, just add it into your `Cargo.toml` like this:
 ferrousgl = "0.1.0"
 ```
 
+## Examples
+
+<img src="examples/screenshots/instanced_grass.png" alt="Instanced Grass Example" width="300">
+
 ## Current Features
-- Instanced Rendering
+- Nice and easy to implement Instanced Rendering
 - Fragment, Vertex, Compute, Geometry (untested) Shaders
 - Window with configuration and selectable OpenGL versions
+- Mesh creation with a mesh config for simple meshes and support for primitives
 - More on the way
-
-## Examples
-Rendering 1,048,576 blades of grass (each 5 polygons) smoothly on an RTX 3050
-<img src="./screenshots/instanced_grass.png">
