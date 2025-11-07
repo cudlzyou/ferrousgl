@@ -1,3 +1,4 @@
+> ❗️ **The library is not dead!**: I'm currently still working on ferrousgl v0.1.0. This full version will feature some changes such as a different syntax (for window creation mostly), more features (compute shaders, instanced rendering, helpers for better window/mesh/shader data creation that makes more sense and a general library overhaul! Also, I don't *currently* suggest to use this library, because it will change (for the better) and currently is deprecated. But for beginners it still might be a helpfull resource.
 
 # <img src="ferrousgl_small.png" alt="Ferrousgl" width="30"> <img src="ferrousgl_logo.png" alt="Ferrousgl" width="120">
 
